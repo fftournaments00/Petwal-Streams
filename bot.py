@@ -9,20 +9,21 @@ API_ID = 34970400
 API_HASH = "b4d8c2fa1afcd70e70a6f49eefc93ecb"    
 BOT_TOKEN = "8942265353:AAGIM-jipwy5QpQkruPMNEm3YDwmv0lZckI"    
 
-# ⚡ Render par deploy karne ke baad jo link milegi, wo baad me yahan localhost ki jagah aayegi
+# Tumhari permanent Render link
 SERVER_URL = "https://petracts-stream.onrender.com" 
 
-bot = TelegramClient('petracts_cloud_session', API_ID, API_HASH)
+# Using in-memory session to avoid cloud storage locks
+bot = TelegramClient(None, API_ID, API_HASH)
 file_store = {}
 routes = web.RouteTableDef()
 
 
-# --- 1. LIGHTWEIGHT HTML5 PLAYER VIEW ---
+# --- 1. CLEAN AUTO-PLAY CONTROLLER ---
 @routes.get('/play/{file_id}')
 async def player_handler(request):
     file_id = request.match_info['file_id']
     if file_id not in file_store:
-        return web.Response(text="Error: File Link Expired from Cache.", status=404)
+        return web.Response(text="File Link Expired. Re-forward file to bot.", status=404)
         
     file_data = file_store[file_id]
     file_name = file_data["file_name"]
@@ -57,12 +58,12 @@ async def player_handler(request):
     return web.Response(text=html_content, content_type='text/html')
 
 
-# --- 2. MULTI-CLIENT NO-LAG DIRECT CDN STREAM STREAMER ---
+# --- 2. HIGH-SPEED CLOUD CDN STREAMER ---
 @routes.get('/stream/{file_id}')
 async def stream_handler(request):
     file_id = request.match_info['file_id']
     if file_id not in file_store:
-        return web.Response(text="Not Found", status=404)
+        return web.Response(text="Stream Not Found", status=404)
 
     file_data = file_store[file_id]
     media_obj = file_data["media"]
@@ -73,17 +74,17 @@ async def stream_handler(request):
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Type": "video/mp4",
-        "Access-Control-Allow-Origin": "*"
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "keep-alive"
     }
 
     if not range_header:
         headers["Content-Length"] = str(file_size)
         return web.Response(status=200, headers=headers)
 
-    # Calculate requested chunks instantly
     match = re.search(r'bytes=(\d+)-(\d*)', range_header)
     if not match:
-        return web.Response(status=400, text="Bad Range Request")
+        return web.Response(status=400, text="Bad Range")
 
     start = int(match.group(1))
     end = int(match.group(2)) if match.group(2) else file_size - 1
@@ -96,24 +97,21 @@ async def stream_handler(request):
     await response.prepare(request)
 
     try:
-        # ⚡ Direct Telegram server pipe allocation with zero RAM overhead
-        async for chunk in bot.iter_download(media_obj, offset=start, stride=512 * 1024):
+        # Reduced chunk footprint to ensure free tier cloud RAM never chokes
+        async for chunk in bot.iter_download(media_obj, offset=start, stride=256 * 1024):
             if not chunk or start > end:
                 break
-                
             if start + len(chunk) > end:
                 chunk = chunk[:(end - start) + 1]
-                
             await response.write(chunk)
             start += len(chunk)
-            
     except Exception:
         pass
 
     return response
 
 
-# --- 3. BOT RESPONDER ---
+# --- 3. BOT MESSAGING RECEIVER ---
 @bot.on(events.NewMessage(incoming=True))
 async def handle_video(event):
     if event.message.video or event.message.document:
@@ -133,9 +131,9 @@ async def handle_video(event):
         embed_code = f'<iframe src="{play_link}" width="100%" height="100%" frameborder="0" allowfullscreen></iframe>'
 
         reply_text = (
-            f"🍿 Petracts Unlimited No-Lag Stream Ready!\n\n"
+            f"🍿 Petracts Cloud Stream Core Online!\n\n"
             f"📂 File Name: {file_name}\n"
-            f"🚀 Network: Direct High-Speed Telegram CDN\n\n"
+            f"🚀 Mode: High-Speed Direct Stream\n\n"
             f"🌐 Web Play Link:\n{play_link}\n\n"
             f"🛠️ Embed Code:\n{embed_code}"
         )
@@ -151,11 +149,9 @@ async def start_services():
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Port 8080 or port injected via cloud ecosystem automatically
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"⚡ Production Server is active on port {port}")
     await bot.run_until_disconnected()
 
 if __name__ == '__main__':
